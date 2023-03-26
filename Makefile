@@ -3,9 +3,10 @@ KMOD_DIR    := $(shell pwd)
 CFLAGS += -I $(KMOD_DIR)
 OBJECTS := $(patsubst %.c, %.o, $(wildcard *.c))
 
-obj-m += mcdev.o
+obj-m += mycdev.o
+mycdev-objs := main.o mcdev.o
 
-all: driver test
+all: driver test ioctl
 
 driver:
 	make -C $(KERNEL) M=$(KMOD_DIR) modules
@@ -15,7 +16,9 @@ install:
 	depmod -a
 test: test.cc
 	g++ -o $@ $^
+ioctl: ioctl.cc
+	g++ -o $@ $^
 clean:
 	rm -f *.ko *.order *.symvers
 	rm -f *.o *.mod*
-	rm -f test
+	rm -f test ioctl

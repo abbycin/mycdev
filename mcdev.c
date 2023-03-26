@@ -5,37 +5,60 @@
  * Create Time: 2023-02-21 21:22:46
  */
 
-#include "linux/container_of.h"
-#include "linux/export.h"
-#include "linux/fs.h"
-#include "linux/cdev.h"
-#include "linux/device.h"
-#include "linux/vmalloc.h"
+#include "mcdev.h"
+#include <linux/container_of.h>
+#include <linux/export.h>
+#include <linux/fs.h>
+#include <linux/cdev.h>
+#include <linux/device.h>
+#include <linux/vmalloc.h>
 
 static ulong cdev_size = (1UL << 20);
-#define MAX_NR_CDEV 1
-static int curr_cdev_idx;
-module_param(cdev_size, ulong, S_IWUSR | S_IWGRP);
-MODULE_PARM_DESC(cdev_size, "per cdev size");
-static char *g_basename;
-static void init_basename(void)
-{
-	char *p = __FILE__;
-	int len = strlen(p);
+static int g_dev_map[MAX_NR_CDEV] = { -1 };
 
-	while (len > 0) {
-		if (*p != '/')
-			--p;
-		len -= 1;
-	}
-	g_basename = p;
+void init_dev_map(void)
+{
+	for (int i = 0; i < MAX_NR_CDEV; ++i)
+		g_dev_map[i] = -1;
 }
 
-#define debug(fmt, ...)                                                        \
-	printk(KERN_NOTICE "%s:%d" fmt "", g_basename, __LINE__, ##__VA_ARGS__)
+// NOTE: minor -= 1 since control dev occupied 0
+static int map_dev(int minor)
+{
+	minor -= 1;
+	if (minor < 0 || minor == MAX_NR_CDEV)
+		return -EINVAL;
+	if (g_dev_map[minor] == 1)
+		return -EEXIST;
+	g_dev_map[minor] = 1;
+	return 0;
+}
+
+// NOTE: minor -= 1 since control dev occupied 0
+static int unmap_dev(int minor)
+{
+	minor -= 1;
+	if (minor < 0 || minor == MAX_NR_CDEV)
+		return -EINVAL;
+	if (g_dev_map[minor] == -1)
+		return -ENXIO;
+	g_dev_map[minor] = -1;
+	return 0;
+}
+
+// NOTE: i + 1 since control dev occupied 0
+static int find_map_entry(void)
+{
+	for (int i = 0; i < MAX_NR_CDEV; ++i) {
+		if (g_dev_map[i] == -1)
+			return i + 1;
+	}
+	return -1;
+}
 
 struct my_cdev {
 	char *data;
+	int minor;
 	struct class *class;
 	struct device *devfs;
 	struct cdev dev;
@@ -98,7 +121,6 @@ my_read(struct file *fp, char __user *data, size_t size, loff_t *off)
 	if (copy_to_user(data, cdev->data + *off, size))
 		return -EFAULT;
 
-	debug("read %zu bytes from %lld", size, *off);
 	*off += size;
 	return size;
 }
@@ -116,7 +138,6 @@ my_write(struct file *fp, const char __user *data, size_t size, loff_t *off)
 	if (copy_from_user(cdev->data + *off, data, size))
 		return -EFAULT;
 
-	debug("write %zu bytes from %lld", size, *off);
 	*off += size;
 	return size;
 }
@@ -136,132 +157,141 @@ static struct file_operations g_fops = {
 	.unlocked_ioctl = my_ioctl,
 };
 
-static int major_id;
-static dev_t g_devno;
 static struct my_cdev *g_cdev_head;
 
-static void setup_my_cdev(struct my_cdev *head, int index)
+static int setup_my_cdev(struct my_cdev *head, dev_t devno)
 {
-	int err, devno = MKDEV(major_id, index);
+	int err = 0;
 
 	debug();
 	cdev_init(&head->dev, &g_fops);
 	debug();
 	head->dev.owner = THIS_MODULE;
+	head->minor = MINOR(devno);
 	err = cdev_add(&head->dev, devno, 1);
 	debug();
 	if (err)
-		printk(KERN_NOTICE "cdev_add err %d cdev index %d", err, index);
+		debug("cdev_add cdev %d rc %d", head->minor, err);
+	return err;
 }
 
-static int __init init_my_cdev(void)
+int add_dev(struct class *parent, int major)
 {
 	int rc;
+	int minor = -1;
+	dev_t devno;
 	struct my_cdev *cdev = NULL;
+	const char *prefix = "mcdev";
 	char name[10] = { 0 };
 
-	init_basename();
 	debug();
-	if (curr_cdev_idx == MAX_NR_CDEV) {
+	minor = find_map_entry();
+	if (minor == -1) {
 		debug("too many device registered");
 		return -ENOMEM;
 	}
-	snprintf(name, sizeof(name), "mycdev_%d", curr_cdev_idx);
-	if (major_id) {
-		dev_t devno = MKDEV(major_id, curr_cdev_idx);
-		rc = register_chrdev_region(devno, 1, name);
-	} else {
-		rc = alloc_chrdev_region(&g_devno, 0, 1, name);
-		if (!major_id)
-			major_id = MAJOR(g_devno);
-	}
+	snprintf(name, sizeof(name), "%s%d", prefix, minor);
+	devno = MKDEV(major, minor);
+	rc = register_chrdev_region(devno, 1, name);
 	if (rc) {
-		printk(KERN_ERR "init my_cdev fail, rc %d", rc);
+		debug("register_chrdev_region %s rc %d", name, rc);
 		return rc;
 	}
 
 	debug();
 	cdev = kzalloc(sizeof(*g_cdev_head), GFP_KERNEL);
 	if (!cdev) {
-		printk(KERN_ERR "can't alloc memory");
+		debug("can't alloc memory for %s", name);
 		rc = -ENOMEM;
 		goto err;
 	}
 	cdev->data = vmalloc(cdev_size);
 	if (!cdev->data) {
-		printk(KERN_ERR "can't alloc memory from storage");
+		debug("can't alloc memory from storage of %s", name);
 		rc = -ENOMEM;
 		goto err;
 	}
-	cdev->class = class_create(THIS_MODULE, "chardrv");
-	if (IS_ERR(cdev->class)) {
-		printk(KERN_ERR "create class for cdev %d fail, rc %d",
-		       curr_cdev_idx,
-		       (int)PTR_ERR(cdev->class));
-		rc = PTR_ERR(cdev->class);
-		goto err;
-	}
-	cdev->devfs = device_create(cdev->class,
-				    NULL,
-				    MKDEV(major_id, curr_cdev_idx),
-				    NULL,
-				    "my_cdev");
+
+	cdev->class = parent;
+	cdev->devfs = device_create(parent, NULL, devno, NULL, name);
 	if (IS_ERR(cdev->devfs)) {
-		printk(KERN_ERR "create device for cdev %d fail, rc %d",
-		       curr_cdev_idx,
-		       (int)PTR_ERR(cdev->devfs));
 		rc = PTR_ERR(cdev->devfs);
+		debug("device_create for cdev %s fail, rc %d", name, rc);
 		goto err;
 	}
 
 	debug();
-	setup_my_cdev(cdev, curr_cdev_idx);
-	curr_cdev_idx += 1;
+	rc = setup_my_cdev(cdev, devno);
+	if (rc)
+		goto err;
+
 	if (!g_cdev_head) {
 		g_cdev_head = cdev;
 	} else {
-		g_cdev_head->next = cdev;
+		cdev->next = g_cdev_head;
 		g_cdev_head = cdev;
 	}
+	map_dev(minor);
 
-	printk(KERN_NOTICE "mycdev %d inited", curr_cdev_idx - 1);
+	debug("add cdev %p", cdev);
 	return 0;
 err:
 	if (cdev) {
 		if (cdev->devfs && !IS_ERR(cdev->devfs))
-			device_destroy(cdev->class,
-				       MKDEV(major_id, curr_cdev_idx));
-		if (cdev->class && !IS_ERR(cdev->class))
-			class_destroy(cdev->class);
+			device_destroy(cdev->class, devno);
 		if (cdev->data)
 			vfree(cdev->data);
 		kfree(cdev);
 	}
-	unregister_chrdev_region(MKDEV(major_id, curr_cdev_idx), 1);
+	unregister_chrdev_region(devno, 1);
 	return rc;
 }
+EXPORT_SYMBOL(add_dev);
 
-static void __exit exit_my_cdev(void)
+static void remove_dev(struct my_cdev *dev, dev_t devno)
 {
-	struct my_cdev *head = g_cdev_head, *next;
-	int idx = 0;
-
-	while (head) {
-		next = head->next;
-		device_destroy(head->class, MKDEV(major_id, idx));
-		class_destroy(head->class);
-		cdev_del(&head->dev);
-		vfree(head->data);
-		kfree(head);
-		head = next;
-		idx += 1;
-	}
-	unregister_chrdev_region(MKDEV(major_id, 0), curr_cdev_idx);
+	device_destroy(dev->class, devno);
+	cdev_del(&dev->dev);
+	vfree(dev->data);
+	kfree(dev);
+	unregister_chrdev_region(devno, 1);
 }
 
-module_init(init_my_cdev);
-module_exit(exit_my_cdev);
-MODULE_DESCRIPTION("a in memory char device driver");
-MODULE_LICENSE("Dual BSD/GPL");
-MODULE_AUTHOR("abbycin (abbytsing@gmail.com)");
-MODULE_VERSION("1.0");
+static struct my_cdev *
+remove_node(struct my_cdev *head, int minor, struct my_cdev **r)
+{
+	struct my_cdev d = { .next = head };
+	struct my_cdev *p = &d;
+
+	while (p) {
+		if (p->next && p->next->minor == minor) {
+			*r = p->next;
+			p->next = p->next->next;
+			break;
+		}
+		p = p->next;
+	}
+	return d.next;
+}
+
+int del_dev(int major, int minor)
+{
+	struct my_cdev *dev = NULL;
+	int rc = unmap_dev(minor);
+	dev_t devno = MKDEV(major, minor);
+
+	if (rc != 0)
+		return rc;
+	if (!g_cdev_head)
+		return -ENOENT;
+
+	g_cdev_head = remove_node(g_cdev_head, minor, &dev);
+	if (dev) {
+		debug("del cdev %p", dev);
+		remove_dev(dev, devno);
+	}
+	return 0;
+}
+EXPORT_SYMBOL(del_dev);
+
+MODULE_LICENSE("GPL");
