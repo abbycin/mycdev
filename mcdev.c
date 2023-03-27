@@ -14,6 +14,8 @@
 #include <linux/vmalloc.h>
 
 static ulong cdev_size = (1UL << 20);
+module_param(cdev_size, ulong, S_IRUSR | S_IWUSR);
+MODULE_PARM_DESC(cdev_size, "memory size of mcdev, default is 1M");
 static int g_dev_map[MAX_NR_CDEV] = { -1 };
 
 void init_dev_map(void)
@@ -163,13 +165,10 @@ static int setup_my_cdev(struct my_cdev *head, dev_t devno)
 {
 	int err = 0;
 
-	debug();
 	cdev_init(&head->dev, &g_fops);
-	debug();
 	head->dev.owner = THIS_MODULE;
 	head->minor = MINOR(devno);
 	err = cdev_add(&head->dev, devno, 1);
-	debug();
 	if (err)
 		debug("cdev_add cdev %d rc %d", head->minor, err);
 	return err;
@@ -184,7 +183,6 @@ int add_dev(struct class *parent, int major)
 	const char *prefix = "mcdev";
 	char name[10] = { 0 };
 
-	debug();
 	minor = find_map_entry();
 	if (minor == -1) {
 		debug("too many device registered");
@@ -198,7 +196,6 @@ int add_dev(struct class *parent, int major)
 		return rc;
 	}
 
-	debug();
 	cdev = kzalloc(sizeof(*g_cdev_head), GFP_KERNEL);
 	if (!cdev) {
 		debug("can't alloc memory for %s", name);
@@ -220,7 +217,6 @@ int add_dev(struct class *parent, int major)
 		goto err;
 	}
 
-	debug();
 	rc = setup_my_cdev(cdev, devno);
 	if (rc)
 		goto err;
@@ -293,5 +289,10 @@ int del_dev(int major, int minor)
 	return 0;
 }
 EXPORT_SYMBOL(del_dev);
+
+ulong dev_mem_size(void)
+{
+	return cdev_size;
+}
 
 MODULE_LICENSE("GPL");

@@ -47,31 +47,29 @@ static long my_ctrl_ioctl(struct file *fp, unsigned int op, unsigned long data)
 
 	switch (op) {
 	case CDEV_ADD:
-		debug("add dev");
 		if (copy_from_user(&cmd, (int32_t *)data, sizeof(cmd))) {
-			pr_err("copy_from_user");
+			debug("copy_from_user");
 			return -EFAULT;
 		}
 		// NOTE: from add `cmd` was ignored
 		rc = add_dev(ctrl->class, MAJOR(g_ctrl_devno));
 		if (rc) {
-			pr_err("add_dev, rc %d", rc);
+			debug("add_dev, rc %d", rc);
 			return rc;
 		}
 		break;
 	case CDEV_DEL:
 		if (copy_from_user(&cmd, (int32_t *)data, sizeof(cmd))) {
-			pr_err("del: copy_from_user");
+			debug("del: copy_from_user");
 			return -EFAULT;
 		}
-		debug("dev dev %d", cmd);
 		if (cmd < 1) {
-			pr_err("bad cmd %d expect range [1, 10]", cmd);
+			debug("bad cmd %d expect range [1, 10]", cmd);
 			return -EINVAL;
 		}
 		rc = del_dev(MAJOR(g_ctrl_devno), cmd);
 		if (rc) {
-			pr_err("del_dev minior %d, rc %d", cmd, rc);
+			debug("del_dev minior %d, rc %d", cmd, rc);
 			return rc;
 		}
 		break;
@@ -125,6 +123,7 @@ static __init int mcdev_init(void)
 		debug("device_create rc %d", rc);
 		goto err;
 	}
+	debug("mcdev memory size %lu", dev_mem_size());
 	return 0;
 err:
 	if (!IS_ERR(g_ctrl.class))

@@ -1,10 +1,11 @@
+BINARY 		:= mycdev
 KERNEL      := /lib/modules/$(shell uname -r)/build
 KMOD_DIR    := $(shell pwd)
-CFLAGS += -I $(KMOD_DIR)
-OBJECTS := $(patsubst %.c, %.o, $(wildcard *.c))
+OBJECTS 	:= $(patsubst %.c, %.o, $(wildcard *.c))
+TARGET_PATH := /lib/modules/$(shell uname -r)/kernel/drivers/char
 
-obj-m += mycdev.o
-mycdev-objs := main.o mcdev.o
+obj-m += $(BINARY).o
+$(BINARY)-objs := main.o mcdev.o
 
 all: driver test ioctl
 
@@ -12,7 +13,7 @@ driver:
 	make -C $(KERNEL) M=$(KMOD_DIR) modules
 
 install:
-	cp $(BINARY).ko $(TARGET_PATH)
+	cp -f $(BINARY).ko $(TARGET_PATH)
 	depmod -a
 test: test.cc
 	g++ -o $@ $^

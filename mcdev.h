@@ -14,7 +14,10 @@
 
 #define MAX_NR_CDEV 10
 #define debug(fmt, ...)                                                        \
-	printk(KERN_NOTICE "%s:%d " fmt "", __func__, __LINE__, ##__VA_ARGS__)
+	printk(KERN_NOTICE "mcdev %s:%d " fmt "",                              \
+	       __func__,                                                       \
+	       __LINE__,                                                       \
+	       ##__VA_ARGS__)
 
 struct my_control {
 	struct cdev dev;
@@ -27,5 +30,7 @@ void init_dev_map(void);
 int add_dev(struct class *parent, int major);
 
 int del_dev(int major, int minor);
+
+ulong dev_mem_size(void);
 
 #endif

@@ -58,6 +58,7 @@ int main(int argc, char *argv[])
 	rc = ioctl(fd, op, &dev);
 	if (rc)
 		debug("ioctl rc %d errno %d", rc, errno);
-	debug("op %d ok", op);
+	else
+		debug("op %d ok", op);
 	close(fd);
 }
