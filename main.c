@@ -29,8 +29,15 @@ my_ctrl_write(struct file *fp, const char __user *buf, size_t size, loff_t *off)
 
 static int my_ctrl_open(struct inode *inode, struct file *fp)
 {
+	int rc = mutex_trylock(&g_ctrl.mtx);
+
+	if (rc == 0) {
+		debug("other process is operating on %s", g_ctrl_name);
+		return -EBUSY;
+	}
 	if (!fp->private_data)
 		fp->private_data = &g_ctrl;
+	mutex_unlock(&g_ctrl.mtx);
 	return 0;
 }
 
@@ -45,38 +52,44 @@ static long my_ctrl_ioctl(struct file *fp, unsigned int op, unsigned long data)
 	int rc = 0;
 	struct my_control *ctrl = fp->private_data;
 
+	mutex_lock(&ctrl->mtx);
 	switch (op) {
 	case CDEV_ADD:
 		if (copy_from_user(&cmd, (int32_t *)data, sizeof(cmd))) {
 			debug("copy_from_user");
-			return -EFAULT;
+			rc = -EFAULT;
+			goto err;
 		}
 		// NOTE: from add `cmd` was ignored
 		rc = add_dev(ctrl->class, MAJOR(g_ctrl_devno));
 		if (rc) {
 			debug("add_dev, rc %d", rc);
-			return rc;
+			goto err;
 		}
 		break;
 	case CDEV_DEL:
 		if (copy_from_user(&cmd, (int32_t *)data, sizeof(cmd))) {
 			debug("del: copy_from_user");
-			return -EFAULT;
+			rc = -EFAULT;
+			goto err;
 		}
 		if (cmd < 1) {
 			debug("bad cmd %d expect range [1, 10]", cmd);
-			return -EINVAL;
+			rc = -EINVAL;
+			goto err;
 		}
 		rc = del_dev(MAJOR(g_ctrl_devno), cmd);
 		if (rc) {
 			debug("del_dev minior %d, rc %d", cmd, rc);
-			return rc;
+			goto err;
 		}
 		break;
 	default:
 		rc = -EINVAL;
 		break;
 	}
+err:
+	mutex_unlock(&ctrl->mtx);
 	return rc;
 }
 
@@ -102,6 +115,7 @@ static __init int mcdev_init(void)
 
 	cdev_init(&g_ctrl.dev, &g_ctrl_ops);
 
+	mutex_init(&g_ctrl.mtx);
 	g_ctrl.dev.owner = THIS_MODULE;
 	rc = cdev_add(&g_ctrl.dev, g_ctrl_devno, 1);
 	if (rc) {
@@ -130,6 +144,7 @@ err:
 		class_destroy(g_ctrl.class);
 	cdev_del(&g_ctrl.dev);
 err1:
+	mutex_destroy(&g_ctrl.mtx);
 	unregister_chrdev_region(g_ctrl_devno, 1);
 	return rc;
 }
@@ -138,6 +153,7 @@ static __exit void mcdev_exit(void)
 {
 	int major = MAJOR(g_ctrl_devno);
 
+	mutex_destroy(&g_ctrl.mtx);
 	for (int i = 0; i < MAX_NR_CDEV; ++i)
 		del_dev(major, i);
 	device_destroy(g_ctrl.class, g_ctrl_devno);

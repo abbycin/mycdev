@@ -1,7 +1,6 @@
 BINARY 		:= mycdev
 KERNEL      := /lib/modules/$(shell uname -r)/build
 KMOD_DIR    := $(shell pwd)
-OBJECTS 	:= $(patsubst %.c, %.o, $(wildcard *.c))
 TARGET_PATH := /lib/modules/$(shell uname -r)/kernel/drivers/char
 
 obj-m += $(BINARY).o

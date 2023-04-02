@@ -11,6 +11,7 @@
 #include <linux/cdev.h>
 #include <linux/fs.h>
 #include <linux/device.h>
+#include <linux/mutex.h>
 
 #define MAX_NR_CDEV 10
 #define debug(fmt, ...)                                                        \
@@ -21,6 +22,7 @@
 
 struct my_control {
 	struct cdev dev;
+	struct mutex mtx;
 	struct class *class;
 	struct device *device;
 };

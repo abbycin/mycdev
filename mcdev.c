@@ -64,8 +64,50 @@ struct my_cdev {
 	struct class *class;
 	struct device *devfs;
 	struct cdev dev;
+	struct mutex mtx;
+	wait_queue_head_t r_wait;
+	wait_queue_head_t w_wait;
+	size_t r_cursor;
+	size_t w_cursor;
+	size_t size;
+	size_t cap;
 	struct my_cdev *next;
 };
+
+static size_t readable_bytes(struct my_cdev *cdev)
+{
+	return cdev->size;
+}
+
+static size_t writable_bytes(struct my_cdev *cdev)
+{
+	return cdev->cap - cdev->size;
+}
+
+static ssize_t push(struct my_cdev *cdev, const char __user *buf, size_t nbytes)
+{
+	nbytes = min(writable_bytes(cdev), nbytes);
+	if (copy_from_user(cdev->data + cdev->w_cursor, buf, nbytes)) {
+		debug("copy_from_user");
+		return -EFAULT;
+	}
+	cdev->w_cursor = (cdev->w_cursor + nbytes) % cdev->cap;
+	cdev->size += nbytes;
+	return nbytes;
+}
+
+static ssize_t poll(struct my_cdev *cdev, char __user *buf, size_t nbytes)
+{
+
+	nbytes = min(readable_bytes(cdev), nbytes);
+	if (copy_to_user(buf, cdev->data + cdev->r_cursor, nbytes)) {
+		debug("copy_to_user");
+		return -EFAULT;
+	}
+	cdev->r_cursor = (cdev->r_cursor + nbytes) % cdev->cap;
+	cdev->size -= nbytes;
+	return nbytes;
+}
 
 static int my_open(struct inode *inode, struct file *fp)
 {
@@ -82,66 +124,90 @@ static int my_release(struct inode *inode, struct file *fp)
 
 static loff_t my_llseek(struct file *fp, loff_t off, int op)
 {
-	loff_t rc = 0;
-
-	switch (op) {
-	case SEEK_SET:
-		if (off < 0)
-			return -EINVAL;
-		if (off > cdev_size)
-			return -EINVAL;
-		fp->f_pos = off;
-		rc = fp->f_pos;
-		break;
-	case SEEK_CUR:
-		if ((fp->f_pos + off) > cdev_size)
-			return -EINVAL;
-		if ((fp->f_pos + off) < 0)
-			return -EINVAL;
-		fp->f_pos += off;
-		rc = fp->f_pos;
-		break;
-	default:
-		rc = -EINVAL;
-		break;
-	}
-	return rc;
+	return -ENOSYS;
 }
 
 static ssize_t
 my_read(struct file *fp, char __user *data, size_t size, loff_t *off)
 {
+	ssize_t rc = 0;
 	struct my_cdev *cdev = fp->private_data;
+	DECLARE_WAITQUEUE(wait, current);
 
-	if (*off >= cdev_size)
-		return 0; // EOF
+	mutex_lock(&cdev->mtx);
+	add_wait_queue(&cdev->r_wait, &wait);
 
-	// there at most cdev_size - *off left to be read
-	if (size > cdev_size - *off)
-		size = cdev_size - *off;
+	while (readable_bytes(cdev) == 0) {
+		if (fp->f_flags & O_NONBLOCK) {
+			rc = -EAGAIN;
+			goto err;
+		}
 
-	if (copy_to_user(data, cdev->data + *off, size))
-		return -EFAULT;
+		set_current_state(TASK_INTERRUPTIBLE);
+		mutex_unlock(&cdev->mtx);
 
-	*off += size;
-	return size;
+		schedule();
+
+		if (signal_pending(current)) {
+			rc = -ERESTARTSYS;
+			goto err1;
+		}
+		mutex_lock(&cdev->mtx);
+	}
+
+	rc = poll(cdev, data, size);
+	if (rc < 0)
+		goto err;
+
+	wake_up_interruptible(&cdev->w_wait);
+err:
+	mutex_unlock(&cdev->mtx);
+err1:
+	remove_wait_queue(&cdev->r_wait, &wait);
+	set_current_state(TASK_RUNNING);
+	return rc;
 }
 
 static ssize_t
 my_write(struct file *fp, const char __user *data, size_t size, loff_t *off)
 {
+	ssize_t rc = 0;
 	struct my_cdev *cdev = fp->private_data;
+	DECLARE_WAITQUEUE(wait, current);
 
-	if (*off >= cdev_size)
-		return 0;
-	if (size > cdev_size - *off)
-		size = cdev_size - *off;
+	mutex_lock(&cdev->mtx);
+	add_wait_queue(&cdev->w_wait, &wait);
 
-	if (copy_from_user(cdev->data + *off, data, size))
-		return -EFAULT;
+	while (writable_bytes(cdev) == 0) {
+		if (fp->f_flags & O_NONBLOCK) {
+			rc = -EAGAIN;
+			goto err;
+		}
 
-	*off += size;
-	return size;
+		set_current_state(TASK_INTERRUPTIBLE);
+		mutex_unlock(&cdev->mtx);
+
+		schedule();
+
+		if (signal_pending(current)) {
+			rc = -ERESTARTSYS;
+			goto err1;
+		}
+		mutex_lock(&cdev->mtx);
+	}
+
+	rc = push(cdev, data, size);
+	if (rc < 0)
+		goto err;
+
+	wake_up_interruptible(&cdev->r_wait);
+
+err:
+	mutex_unlock(&cdev->mtx);
+err1:
+	remove_wait_queue(&cdev->w_wait, &wait);
+	set_current_state(TASK_RUNNING);
+	return rc;
 }
 
 static long my_ioctl(struct file *fp, unsigned int op, unsigned long data)
@@ -169,9 +235,15 @@ static int setup_my_cdev(struct my_cdev *head, dev_t devno)
 	head->dev.owner = THIS_MODULE;
 	head->minor = MINOR(devno);
 	err = cdev_add(&head->dev, devno, 1);
-	if (err)
+	if (err) {
 		debug("cdev_add cdev %d rc %d", head->minor, err);
-	return err;
+		return err;
+	}
+	head->cap = cdev_size;
+	mutex_init(&head->mtx);
+	init_waitqueue_head(&head->r_wait);
+	init_waitqueue_head(&head->w_wait);
+	return 0;
 }
 
 int add_dev(struct class *parent, int major)
@@ -246,6 +318,7 @@ EXPORT_SYMBOL(add_dev);
 
 static void remove_dev(struct my_cdev *dev, dev_t devno)
 {
+	mutex_destroy(&dev->mtx);
 	device_destroy(dev->class, devno);
 	cdev_del(&dev->dev);
 	vfree(dev->data);
