@@ -46,6 +46,7 @@ compile_commands.json
 main
 test
 ioctl
+poll
 *.symvers
 *.order
 *.mod.c

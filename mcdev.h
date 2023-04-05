@@ -12,6 +12,8 @@
 #include <linux/fs.h>
 #include <linux/device.h>
 #include <linux/mutex.h>
+#include <linux/uaccess.h>
+#include <linux/slab.h>
 
 #define MAX_NR_CDEV 10
 #define debug(fmt, ...)                                                        \

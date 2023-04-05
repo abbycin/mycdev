@@ -6,7 +6,8 @@
  */
 
 #include "mcdev.h"
-#include <linux/container_of.h>
+#include "asm-generic/poll.h"
+#include <linux/poll.h>
 #include <linux/export.h>
 #include <linux/fs.h>
 #include <linux/cdev.h>
@@ -215,6 +216,26 @@ static long my_ioctl(struct file *fp, unsigned int op, unsigned long data)
 	return 0;
 }
 
+static unsigned int my_poll(struct file *fp, poll_table *table)
+{
+	unsigned int mask = 0;
+	struct my_cdev *cdev = fp->private_data;
+
+	mutex_lock(&cdev->mtx);
+
+	poll_wait(fp, &cdev->r_wait, table);
+	poll_wait(fp, &cdev->w_wait, table);
+
+	if (writable_bytes(cdev))
+		mask |= POLLOUT | POLLWRNORM; // normal write
+	if (readable_bytes(cdev))
+		mask |= POLLIN | POLLRDNORM; // normal read
+
+	mutex_unlock(&cdev->mtx);
+
+	return mask;
+}
+
 static struct file_operations g_fops = {
 	.owner = THIS_MODULE,
 	.open = my_open,
@@ -223,6 +244,7 @@ static struct file_operations g_fops = {
 	.read = my_read,
 	.write = my_write,
 	.unlocked_ioctl = my_ioctl,
+	.poll = my_poll,
 };
 
 static struct my_cdev *g_cdev_head;
