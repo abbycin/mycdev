@@ -138,7 +138,7 @@ static __exit void mcdev_exit(void)
 {
 	int major = MAJOR(g_ctrl_devno);
 
-	for (int i = 0; i < MAX_NR_CDEV; ++i)
+	for (int i = 0; i <= MAX_NR_CDEV; ++i)
 		del_dev(major, i);
 	device_destroy(g_ctrl.class, g_ctrl_devno);
 	class_destroy(g_ctrl.class);
