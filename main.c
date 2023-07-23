@@ -123,7 +123,7 @@ static __init int mcdev_init(void)
 		goto err1;
 	}
 
-	if (IS_ERR(g_ctrl.class = class_create(THIS_MODULE, g_ctrl_name))) {
+	if (IS_ERR(g_ctrl.class = class_create(g_ctrl_name))) {
 		rc = (int)PTR_ERR(g_ctrl.class);
 		debug("class create rc %d", rc);
 		goto err;
