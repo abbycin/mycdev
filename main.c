@@ -7,13 +7,20 @@
 
 #include "mcdev.h"
 #include <linux/ioctl.h>
+#include <linux/kobject.h>
 
 static struct my_control g_ctrl;
 static dev_t g_ctrl_devno;
 static const char *g_ctrl_name = "mcdev_control";
 #define MAGIC ('a' | 'b' | 'b' | 'y')
-#define CDEV_ADD _IOW(MAGIC, 1, int32_t *)
-#define CDEV_DEL _IOW(MAGIC, 2, int32_t *)
+#define CDEV_ADD _IOW(MAGIC, -1, int32_t *)
+#define CDEV_DEL _IOW(MAGIC, -2, int32_t *)
+#define CDEV_UEVT_ADD _IOW(MAGIC, 0, int32_t *)
+#define CDEV_UEVT_RM _IOW(MAGIC, 1, int32_t *)
+#define CDEV_UEVT_CHG _IOW(MAGIC, 2, int32_t *)
+#define CDEV_UEVT_MV _IOW(MAGIC, 3, int32_t *)
+#define CDEV_UEVT_ON _IOW(MAGIC, 4, int32_t *)
+#define CDEV_UEVT_OFF _IOW(MAGIC, 5, int32_t *)
 
 static ssize_t
 my_ctrl_read(struct file *fp, char __user *buf, size_t size, loff_t *off)
@@ -84,6 +91,36 @@ static long my_ctrl_ioctl(struct file *fp, unsigned int op, unsigned long data)
 			goto err;
 		}
 		break;
+	case CDEV_UEVT_ADD: {
+		char *evp[] = { "mo=ha", NULL };
+		kobject_uevent_env(&ctrl->device->kobj, KOBJ_ADD, evp);
+		break;
+	}
+	case CDEV_UEVT_RM: {
+		char *evp[] = { "elder=+1s", NULL };
+		kobject_uevent_env(&ctrl->device->kobj, KOBJ_REMOVE, evp);
+		break;
+	}
+	case CDEV_UEVT_MV: {
+		char *evp[] = { "naive=jiang", NULL };
+		kobject_uevent_env(&ctrl->device->kobj, KOBJ_MOVE, evp);
+		break;
+	}
+	case CDEV_UEVT_CHG: {
+		char *evp[] = { "young=simple", NULL };
+		kobject_uevent_env(&ctrl->device->kobj, KOBJ_CHANGE, evp);
+		break;
+	}
+	case CDEV_UEVT_ON: {
+		char *evp[] = { "somtimes=naive", NULL };
+		kobject_uevent_env(&ctrl->device->kobj, KOBJ_ONLINE, evp);
+		break;
+	}
+	case CDEV_UEVT_OFF: {
+		char *evp[] = { "big=news", NULL };
+		kobject_uevent_env(&ctrl->device->kobj, KOBJ_OFFLINE, evp);
+		break;
+	}
 	default:
 		rc = -EINVAL;
 		break;

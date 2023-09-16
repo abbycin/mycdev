@@ -13,8 +13,14 @@
 #include <sys/ioctl.h>
 
 #define MAGIC ('a' | 'b' | 'b' | 'y')
-#define CMD_ADD _IOW(MAGIC, 1, int32_t *)
-#define CMD_DEL _IOW(MAGIC, 2, int32_t *)
+#define CMD_ADD _IOW(MAGIC, -1, int32_t *)
+#define CMD_DEL _IOW(MAGIC, -2, int32_t *)
+#define CMD_UEVT_ADD _IOW(MAGIC, 0, int32_t *)
+#define CMD_UEVT_RM _IOW(MAGIC, 1, int32_t *)
+#define CMD_UEVT_CHG _IOW(MAGIC, 2, int32_t *)
+#define CMD_UEVT_MV _IOW(MAGIC, 3, int32_t *)
+#define CMD_UEVT_ON _IOW(MAGIC, 4, int32_t *)
+#define CMD_UEVT_OFF _IOW(MAGIC, 5, int32_t *)
 
 #define debug(fmt, ...)                                                        \
 	fprintf(stderr, "%s:%d " fmt "\n", __func__, __LINE__, ##__VA_ARGS__)
@@ -29,24 +35,42 @@ int main(int argc, char *argv[])
 	const char *path = "/dev/mcdev_control";
 
 	optind = 0;
-	while ((opt = getopt(argc, argv, "p:ad:h")) != -1) {
+	while ((opt = getopt(argc, argv, "p:carxmoid:h")) != -1) {
 		switch (opt) {
 		case 'p':
 			path = optarg;
 			break;
-		case 'a':
+		case 'c':
 			op = CMD_ADD;
 			break;
 		case 'd':
 			op = CMD_DEL;
 			dev = atoi(optarg);
 			break;
+		case 'a':
+			op = CMD_UEVT_ADD;
+			break;
+		case 'r':
+			op = CMD_UEVT_RM;
+			break;
+		case 'x':
+			op = CMD_UEVT_CHG;
+			break;
+		case 'm':
+			op = CMD_UEVT_MV;
+			break;
+		case 'o':
+			op = CMD_UEVT_ON;
+			break;
+		case 'i':
+			op = CMD_UEVT_OFF;
+			break;
 		default:
 			break;
 		}
 	}
 	if (op == (unsigned int)-1 || (op == CMD_DEL && dev < 0)) {
-		debug("%s [-p /dev/mcdev_control] [-a] [-d dev] -h", argv[0]);
+		debug("%s [-p /dev/mcdev_control] [-c] [-d dev] -h", argv[0]);
 		return 1;
 	}
 
